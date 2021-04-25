@@ -47,7 +47,7 @@ FrontierDB::FrontierDB(ros::NodeHandle* n) :
     frontier_DB(),
     new_frontiers()
     {
-        frontier_pub_ = n->advertise<5PointCloud> ("latest_frontiers", 1);
+        frontier_pub_ = n->advertise<sensor_msgs::PointCloud> ("latest_frontiers", 1);
     }
 
 void Contour::GenerateContour(const sensor_msgs::PointCloud& laser_coordinates){
