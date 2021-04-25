@@ -8,6 +8,7 @@
 #include "geometry_msgs/PoseStamped.h"
 #include "geometry_msgs/TransformStamped.h"
 #include "sensor_msgs/LaserScan.h"
+#include "visualization_msgs/Marker.h"
 #include "nav_msgs/OccupancyGrid.h"
 #include "nav_msgs/Odometry.h"
 #include <tf2_ros/transform_listener.h>
@@ -45,6 +46,7 @@ FrontierDB* f_database;
 nav_msgs::Odometry odom_msg;
 nav_msgs::OccupancyGrid global_map;
 geometry_msgs::PoseStamped goal_msg;
+visualization_msgs::Marker marker;
 
 tf2_ros::TransformListener* listener; // Odom listener
 tf::TransformListener* listener2; // Laser listener
@@ -70,11 +72,11 @@ void LaserCallback(const sensor_msgs::LaserScan::ConstPtr& msg){
     // Transform laserscan to pointcloud. 
     listener2->waitForTransform("/base_laser", "/map", ros::Time::now(), ros::Duration(3.0));
     projector_.transformLaserScanToPointCloud("map",*msg,laser_in_map,*listener2);
-    //std::cout << "X = :" << laser_in_map.points[0].x; 
-    
     // Get transform of robot pose to map frame. 
-    robot_transform = tfBuffer_->lookupTransform("base_link","map",ros::Time::now(),ros::Duration(5.0));
+    robot_transform = tfBuffer_->lookupTransform("base_link","map",ros::Time::now(),ros::Duration(6.0));
     
+     //////         FFD         //////
+
     // Generate a list of contour points (set resolution of line) from laser scan points
     contour->GenerateContour( laser_in_map );
     
@@ -84,12 +86,15 @@ void LaserCallback(const sensor_msgs::LaserScan::ConstPtr& msg){
     // Appends new frontiers from contour
     f_database->ExtractNewFrontier(*contour, global_map); //Somtimes this segfaults need to find out why.... timing issue
     f_database->MaintainFrontiers(*contour, global_map); 
-    //f_database->UpdateClosestFrontierAverage(*contour);
+    f_database->UpdateClosestFrontierAverage(*contour);
 
     // Publish closest frontier waypoint to robot.
-    //vector<float> robot_pos = f_database->GetCalculatedWaypoint(*contour);
-    //goal_msg = f_database->PublishClosestFrontierAsNavGoal(robot_pos);
+    vector<float> robot_pos = f_database->GetCalculatedWaypoint(*contour);
+    goal_msg = f_database->PublishClosestFrontierAsNavGoal(robot_pos);
+    ROS_INFO("PUBLISHING WAYPOINT : [%f,%f,%f]", goal_msg.pose.position.x,goal_msg.pose.position.y,goal_msg.pose.position.z);
+    marker = f_database->PublishNavGoal(goal_msg);
     ROS_INFO("LASER: [%f]", (*msg).header.stamp.toSec());
+
     }
 }
 
@@ -124,9 +129,10 @@ int main(int argc, char **argv){
     listener2 = new tf::TransformListener();
     
     ros::Subscriber odom_sub = n.subscribe("/odom", 1, OdomCallback);
-    ros::Subscriber laser_sub = n.subscribe("/scan", 1, LaserCallback);
+    ros::Subscriber laser_sub = n.subscribe("/scan_multi", 1, LaserCallback);
     ros::Subscriber map_sub = n.subscribe("/map", 1, OccupancyMapCallback);
     ros::Publisher goal_pub = n.advertise<geometry_msgs::PoseStamped>("/move_base_simple/goal", 1);
+    ros::Publisher vis_pub = n.advertise<visualization_msgs::Marker>( "waypoint_marker", 0 );
     ros::Rate loop_rate(10);
     
     while (ros::ok()){
@@ -134,6 +140,7 @@ int main(int argc, char **argv){
         ros::spinOnce();
         //Publish Calculated Goal Message to Rviz
         goal_pub.publish(goal_msg);
+        vis_pub.publish( marker );
         loop_rate.sleep();
     }
     delete contour;
