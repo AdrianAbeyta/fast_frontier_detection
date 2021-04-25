@@ -10,6 +10,9 @@
 #include "geometry_msgs/TransformStamped.h"
 #include <iostream>  
 #include <numeric>  
+#include <cmath>
+#include <cfloat>
+#include "visualization_msgs/Marker.h"
 
 using geometry::line2f;
 using std::cout;
@@ -32,7 +35,6 @@ ros::Publisher contour_pub_;
 ros::Publisher frontier_pub_;
 
 
-
 Contour::Contour(ros::NodeHandle* n) :
     resolution_(0.05) 
     {
@@ -45,7 +47,7 @@ FrontierDB::FrontierDB(ros::NodeHandle* n) :
     frontier_DB(),
     new_frontiers()
     {
-        frontier_pub_ = n->advertise<sensor_msgs::PointCloud> ("latest_frontiers", 1);
+        frontier_pub_ = n->advertise<5PointCloud> ("latest_frontiers", 1);
     }
 
 void Contour::GenerateContour(const sensor_msgs::PointCloud& laser_coordinates){
@@ -209,6 +211,16 @@ void Contour::SampleLine(const line2f line){
 
 void Contour::UpdateActiveArea( const nav_msgs::Odometry& msg , const sensor_msgs::PointCloud& laser_coordinates,  geometry_msgs::TransformStamped robot_transform )
 {
+    // Calulate robot pose in map frame given transformation.
+    //float robot_x = robot_transform.transform.translation.x + msg.pose.pose.position.x; 
+    //float robot_y = robot_transform.transform.translation.y + msg.pose.pose.position.y;
+
+    float robot_x = robot_transform.transform.translation.x; 
+    float robot_y = robot_transform.transform.translation.y;
+    
+    //Update Private Variable
+    robot_pos_ = { robot_x, robot_y };
+
     float xmin = -90000;
     float xmax =  90000;
     float ymin = -90000;
@@ -242,6 +254,7 @@ vector<float> Contour::GetActiveArea(){
     return active_area_;
 }
 std::vector<float> Contour::GetRobotPosition(){
+
    return robot_pos_;
 }
 
@@ -480,13 +493,13 @@ void FrontierDB::MaintainFrontiers(Contour& c, const nav_msgs::OccupancyGrid& gr
     //Get active area
     std::vector<float> active_area = c.GetActiveArea(); //Xmin,Xmax,Ymin,Ymax
     
-    cout<<"DEBUG! 1 "<<endl;
+    //cout<<"DEBUG! 1 "<<endl;
     for(unsigned int x = active_area[0]; x<=active_area[1]; ++x)
     {
-        cout<<"DEBUG! 7777 "<<endl;
+        //cout<<"DEBUG! 7777 "<<endl;
         for(unsigned int y = active_area[2]; y<active_area[3]; ++y)
         {
-            cout<<"DEBUG! 2 "<<endl;
+            //cout<<"DEBUG! 2 "<<endl;
             int p_x=x;
             int p_y=y;
 
@@ -497,7 +510,7 @@ void FrontierDB::MaintainFrontiers(Contour& c, const nav_msgs::OccupancyGrid& gr
             if ( IsCellFrontier(graph,x_cell,y_cell) )
             {
                 
-                cout<<"DEBUG! 3 "<<endl;
+                //cout<<"DEBUG! 3 "<<endl;
                 // split the current frontier into two partial frontiers
                 int Enables_f = -1;
                 int Enables_p = -1;
@@ -506,17 +519,17 @@ void FrontierDB::MaintainFrontiers(Contour& c, const nav_msgs::OccupancyGrid& gr
                 {
                     for (unsigned int j = 0; j < frontier_DB.frontiers[i].msg.points.size(); ++j) 
                     {
-                        cout<<"DEBUG! 4 "<<endl;
+                        //cout<<"DEBUG! 4 "<<endl;
                         if( frontier_DB.frontiers[i].msg.points[j].x == p_x && frontier_DB.frontiers[i].msg.points[j].y == p_y )
                         {
-                            cout<<"DEBUG! 5 "<<endl;
+                            //cout<<"DEBUG! 5 "<<endl;
                             Enables_f = i;
                             Enables_p = j;
                         }
                     }//j
                 }//i
                 
-                cout<<"DEBUG! 6 "<<endl;
+                //cout<<"DEBUG! 6 "<<endl;
                 if(Enables_f == -1 || Enables_p == -1)
                     continue;
 
@@ -541,25 +554,23 @@ void FrontierDB::MaintainFrontiers(Contour& c, const nav_msgs::OccupancyGrid& gr
         }//for x
     }//for y
 
-    cout<<"DEBUG! 7 "<<endl;
+    
     //Storing new detected frontiers
      //const int x = graph.info.width;
      //const int y = graph.info.height;
-     int ActiveArea[ 1000 ][ 1000 ]; // SEGFAULTING HERE FOR SOME REASON!
+     int ActiveArea[ 1000 ][ 1000 ]; // SEGFAULTING HERE FOR SOME REASON! --overflows the stack because its realy large data set.
 
     for (unsigned int i = 0; i < frontier_DB.frontiers.size(); ++i)
     {
         for (unsigned int j = 0; j < frontier_DB.frontiers[i].msg.points.size(); ++j) 
         {
-            cout<<"DEBUG! 8 "<<endl;
-
             int x = frontier_DB.frontiers[i].msg.points[j].x;
             int y = frontier_DB.frontiers[i].msg.points[j].y;
             ActiveArea[x][y] = i;
-            cout<<"DEBUG! 9 "<<endl;
         }
     }
-    cout<<"DEBUG! 555 "<<endl;
+    
+    // MergeFrontiers
      for( unsigned int i=0; i<new_frontiers.frontiers.size(); ++i)
      {
          frontier f = new_frontiers.frontiers[i];
@@ -569,11 +580,10 @@ void FrontierDB::MaintainFrontiers(Contour& c, const nav_msgs::OccupancyGrid& gr
         {
             int x = f.msg.points[j].x;
             int y = f.msg.points[j].y;
-            cout<<"DEBUG! 10 "<<endl;
+            
             if( ActiveArea[x][y] != 0 ) //overlap
             {
-                cout<<"DEBUG! 11 "<<endl;
-                long int exists = ActiveArea[x][y]; 
+                int exists = ActiveArea[x][y]; 
                 //merge f and exists
                 for( int merged=0; merged<f.msg.points.size(); ++merged)
                 {
@@ -592,7 +602,7 @@ void FrontierDB::MaintainFrontiers(Contour& c, const nav_msgs::OccupancyGrid& gr
         }
 
      } //for i
-    cout<<"DEBUG! 999 "<<endl;
+
    //remove empty frontier
     for( unsigned int i=0; i< frontier_DB.frontiers.size(); i++)
     {
@@ -601,32 +611,57 @@ void FrontierDB::MaintainFrontiers(Contour& c, const nav_msgs::OccupancyGrid& gr
             frontier_DB.frontiers.erase(frontier_DB.frontiers.begin() + i);
         }
     }  
-    cout<<"DEBUG! 1111 "<<endl;
-    //convert frontierDB to frontiers
-    for( unsigned int i=0; frontier_DB.frontiers.size(); i++)
+    
+    //Update frontier_goal_choices pts
+    float sum_x = 0.0;
+    float sum_y = 0.0;
+   
+     for(auto& frontier:frontier_DB.frontiers)
     {
         
-        vector<float> NewFrontiers;
-        cout<<"DEBUG! 111889923 "<<endl;
-        /////////////////////////////////////////////////////////////////////// ended here for the night. 
-        for( int j=0; j<ThisFrontier.size(); j++)
-        {
-           NewFrontiers.push_back(   ThisFrontier[j].x + (ThisFrontier[j].y * graph.info.width) ); 
-        }
+        for ( auto& point:frontier.msg.points)
+        {  
 
-        frontier_goals.push_back(NewFrontiers);
-    }    
-    cout<<"DEBUG! 11112223 "<<endl;
-    vector<float> NewFrontiers2;    
-    for(unsigned int x=0; x<5; x++)
-    {
-        for( unsigned int y=0; y<5; y++)
-        {
-                NewFrontiers2.push_back( x + (y * graph.info.width) );
+            sum_x += point.x;
+            sum_y += point.y;
         }
+       
+    
+        float x_average = sum_x/frontier.msg.points.size();
+        float y_average = sum_y/frontier.msg.points.size();
+
+        vector<float> frontier_average_pt = {x_average,y_average};
+        frontier_goals.push_back(frontier_average_pt);
     }
-    cout<<"DEBUG! 865783 "<<endl;
-    frontier_goals.push_back(NewFrontiers2);
+
+
+    // //convert frontierDB to frontiers
+    // for( unsigned int i=0; frontier_DB.frontiers.size(); i++)
+    // {
+        
+    //     vector<float> NewFrontiers;
+    //     cout<<"DEBUG! 111889923 "<<endl;
+
+    //     frontier_vector ThisFrontier = frontier_DB;
+        
+    //     for( int j=0; j<ThisFrontier.frontiers.size(); j++)
+    //     {
+    //        NewFrontiers.push_back(   ThisFrontier.frontiers[i].msg.points[j].x + (ThisFrontier.frontiers[i].msg.points[j].y * graph.info.width) ); 
+    //     }
+
+    //     frontier_goals.push_back(NewFrontiers);
+    // }    
+    // cout<<"DEBUG! 11112223 "<<endl;
+    // vector<float> NewFrontiers2;    
+    // for(unsigned int x=0; x<5; x++)
+    // {
+    //     for( unsigned int y=0; y<5; y++)
+    //     {
+    //             NewFrontiers2.push_back( x + (y * graph.info.width) );
+    //     }
+    // }
+    // cout<<"DEBUG! 865783 "<<endl;
+    // frontier_goals.push_back(NewFrontiers2);
 }
 
 
@@ -732,24 +767,38 @@ void FrontierDB::UpdateClosestFrontierAverage( Contour& c )
 {
 
     std::vector<float> robot_pos = c.GetRobotPosition();
-    
+    cout<<robot_pos[0]<< endl;
     float goal_distance = 100000.0;
     vector<float> goal;
-    //std::cout << " This is size: " << frontier_goals.size() << std::endl;
+
     if (frontier_goals.size() > 0)
     {
-        for ( auto& frontier_pt: frontier_goals )
-        {
-            //std::cout << " this is front point x : " << frontier_pt[0] << std::endl;
-            float distance_to_pt = sqrt(pow(frontier_pt[0]-robot_pos[0],2) + pow(frontier_pt[1]-robot_pos[1],2));
         
-            if ( distance_to_pt < goal_distance)
+        for ( auto& frontier_pt: frontier_goals )
+        {   
+            if ( !isinf(frontier_pt[0]) && !isinf(frontier_pt[1]) )
             {
-                goal = frontier_pt;
-                goal_distance = distance_to_pt;
+         
+                float distance_to_pt = sqrt(pow(frontier_pt[0]-robot_pos[0],2) + pow(frontier_pt[1]-robot_pos[1],2));
+                
+                //Get shortest distance to point. 
+                if ( distance_to_pt < goal_distance )
+                {
+                    frontier_pt[0] = frontier_pt[0]+0.2;
+                    frontier_pt[1] = frontier_pt[1]+0.2;
+                    goal = frontier_pt;
+                    goal_distance = distance_to_pt;
+                }
+                
+//                 if(distance_to_pt < goal_distance)
+//                 {
+//                      and
+//                 }
+
             }
         }
 
+        
         //Set private variable goal waypoint
         calculated_waypoint_ = goal;
     }
@@ -762,11 +811,12 @@ return;
 
 geometry_msgs::PoseStamped FrontierDB::PublishClosestFrontierAsNavGoal( vector<float> robot_pos )
 {
+
+    
+
     geometry_msgs::PoseStamped goal_msg;
     goal_msg.header.frame_id = "map";
     goal_msg.header.stamp = ros::Time::now();
-
-    //std::cout << "this is len of robot pos" << " " <<robot_pos.size() << std::endl;
 
     goal_msg.pose.position.x = robot_pos[0]; 
     goal_msg.pose.position.y = robot_pos[1];
@@ -774,18 +824,45 @@ geometry_msgs::PoseStamped FrontierDB::PublishClosestFrontierAsNavGoal( vector<f
     
     goal_msg.pose.orientation.x = 0.0;
     goal_msg.pose.orientation.y = 0.0;
-    goal_msg.pose.orientation.z = 1.0;
-    goal_msg.pose.orientation.w = 0.0; 
+    goal_msg.pose.orientation.z = 0.0;
+    goal_msg.pose.orientation.w = 1.0; 
 
     return goal_msg;  
 }
 
+visualization_msgs::Marker FrontierDB::PublishNavGoal( geometry_msgs::PoseStamped goal_msg )
+{
+    visualization_msgs::Marker marker;
+    marker.header.frame_id = goal_msg.header.frame_id;
+    marker.header.stamp = goal_msg.header.stamp;
+    marker.ns = "my_namespace";
+    marker.id = 0;
+    marker.type = visualization_msgs::Marker::SPHERE;
+    marker.action = visualization_msgs::Marker::ADD;
+    marker.pose.position.x = goal_msg.pose.position.x;
+    marker.pose.position.y = goal_msg.pose.position.y;
+    marker.pose.position.z = goal_msg.pose.position.z;
+    marker.pose.orientation.x = goal_msg.pose.orientation.x;
+    marker.pose.orientation.y = goal_msg.pose.orientation.y;
+    marker.pose.orientation.z = goal_msg.pose.orientation.z;
+    marker.pose.orientation.w = goal_msg.pose.orientation.w;
+    marker.scale.x = 0.25;
+    marker.scale.y = 0.25;
+    marker.scale.z = 0.25;
+    marker.color.a = 1.0; // Don't forget to set the alpha!
+    marker.color.r = 0.5;
+    marker.color.g = 1.0;
+    marker.color.b = 0.0;
 
+    return marker;
+}
 std::vector<float> FrontierDB::GetCalculatedWaypoint(Contour c){
-    std::cout << "This is size of frontier_goals: " << frontier_goals.size() <<std::endl;
+
+    // Stop exploration when there are no longer any frontier goals. 
     if (frontier_goals.size() == 0)
     {
         calculated_waypoint_ = c.GetRobotPosition();
+        cout << "EXPLORATION COMPLETE!" <<endl;
     }
 
    return calculated_waypoint_;
