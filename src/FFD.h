@@ -9,6 +9,7 @@
 #include "geometry_msgs/TransformStamped.h"
 #include "nav_msgs/Odometry.h"
 #include "geometry_msgs/PoseStamped.h"
+#include "visualization_msgs/Marker.h"
 
 using nav_msgs::OccupancyGrid;
 
@@ -61,7 +62,7 @@ namespace FFD{
       //TODO fix order in function
         // Default contructor
         FrontierDB( ros::NodeHandle* n );
-        
+
         // Appends new frontiers from contour
         void ExtractNewFrontier( Contour& c, const nav_msgs::OccupancyGrid& g );
         bool IsCellFrontier( const nav_msgs::OccupancyGrid& g, const int x_cell, const int y_cell );
@@ -81,6 +82,7 @@ namespace FFD{
 
         std::vector<float> GetCalculatedWaypoint(Contour c);
         geometry_msgs::PoseStamped PublishClosestFrontierAsNavGoal( std::vector<float> robot_pos );
+        visualization_msgs::Marker PublishNavGoal( geometry_msgs::PoseStamped goal_msg );
 
         
 
