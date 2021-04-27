@@ -1,4 +1,5 @@
 
+
 #include "ros/ros.h"
 #include "std_msgs/String.h"
 #include "geometry_msgs/PoseStamped.h"
@@ -19,6 +20,11 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl_ros/point_cloud.h>
+
+#include "move_base_msgs/MoveBaseAction.h"
+#include "actionlib/client/simple_action_client.h"
+#include <cstdlib> 
+#include <ctime> 
 #include "FFD.h"
 
 #include "../laser_geometry-kinetic-devel/include/laser_geometry/laser_geometry.h"
@@ -45,7 +51,8 @@ visualization_msgs::Marker marker;
 tf2_ros::TransformListener* listener; // Odom listener
 tf::TransformListener* listener2; // Laser listener
 tf2_ros::Buffer* tfBuffer_;
-
+int frontier_i;
+typedef actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction> MoveBaseClient;
 bool initial_map_FLAG = false; 
 
 void OdomCallback(const nav_msgs::Odometry::ConstPtr& msg){
@@ -60,15 +67,81 @@ void OdomCallback(const nav_msgs::Odometry::ConstPtr& msg){
 
 }
 
+void SendGoaltoMoveBase(){
+
+//////         Handle Movebase Action       //////
+
+    //End exploration if there are no more frontiers. 
+    if(f_database->frontier_goals.size() == 0)
+			return;
+
+    // Frontier is a list of points returns the index of the frontier with shortest distace with respect to the robot position. 
+    frontier_i = f_database->UpdateClosestFrontierAverage(*contour);
+
+    // Fill out move base msg publisher.
+    move_base_msgs::MoveBaseGoal goal_pub;
+	goal_pub.target_pose.header.frame_id = "map";
+	goal_pub.target_pose.header.stamp = ros::Time::now();
+	
+     // If timeout or no action pick random frontier goal. 
+    bool at_target = false;
+	int attempts = 0;	
+    while(!at_target && attempts < 2) 
+    {
+		if(attempts >= 0)
+        {
+			//frontier_i = (rand() % f_database->frontier_goals.size());
+            frontier_i = 1;
+			at_target = false;
+		}
+			attempts++;
+    }
+
+    goal_pub.target_pose.pose.position.x = f_database->frontier_goals[frontier_i][0];
+    goal_pub.target_pose.pose.position.y = f_database->frontier_goals[frontier_i][1];
+	geometry_msgs::Quaternion odom_quat = tf::createQuaternionMsgFromYaw(0);
+    goal_pub.target_pose.pose.orientation = odom_quat;
+    ROS_INFO("Navigating to: x: %f y: %f", goal_pub.target_pose.pose.position.x, goal_pub.target_pose.pose.position.y);
+    
+    // Initaiate move base client
+    MoveBaseClient ac("move_base", true);
+    
+    //If move base server not up wait untill it is. 
+    while(!ac.waitForServer(ros::Duration(45.0)))
+    {
+				ROS_INFO("Is the move_base action server up? ");
+	}
+    
+    //Publishes nav goal marker.
+    ac.sendGoal(goal_pub);
+    marker = f_database->PublishNavGoal(goal_pub);
+	
+    //Time to wait for robot to travel to goal before setting new path. 
+    ac.waitForResult(ros::Duration(15.0));
+    
+    //If the robot reaches given goal, rotate in circle and publush new goal. 
+    if(ac.getState() == actionlib::SimpleClientGoalState::SUCCEEDED) 
+    {
+		at_target = true;
+		ROS_INFO("The base moved to %f,%f", goal_pub.target_pose.pose.position.x, goal_pub.target_pose.pose.position.y);
+		geometry_msgs::Quaternion odom_quat = tf::createQuaternionMsgFromYaw(3.14);
+		goal_pub.target_pose.pose.orientation = odom_quat;
+		ac.sendGoal(goal_pub);
+		ac.waitForResult();
+	}
+
+}
+
 void LaserCallback(const sensor_msgs::LaserScan::ConstPtr& msg){
     
     if(initial_map_FLAG == true)
     {
+    tf::StampedTransform transform;   
     // Transform laserscan to pointcloud. 
-    listener2->waitForTransform("/scan_multi", "/map", ros::Time::now(), ros::Duration(2.5));
+    listener2->waitForTransform("/scan_multi", "/map", ros::Time(0), ros::Duration(3.5));
     projector_.transformLaserScanToPointCloud("map",*msg,laser_in_map,*listener2);
     // Get transform of robot pose to map frame. 
-    robot_transform = tfBuffer_->lookupTransform("base_link","map",ros::Time::now(),ros::Duration(2.5));
+    robot_transform = tfBuffer_->lookupTransform("base_link","map",ros::Time(0),ros::Duration(3.5));
     
      //////         FFD         //////
 
@@ -81,20 +154,11 @@ void LaserCallback(const sensor_msgs::LaserScan::ConstPtr& msg){
     // Appends new frontiers from contour
     f_database->ExtractNewFrontier(*contour, global_map); //Somtimes this segfaults need to find out why.... timing issue
     f_database->MaintainFrontiers(*contour, global_map); 
-    f_database->UpdateClosestFrontierAverage(*contour);
-
-    //////         Publush Points         //////
-    // Publish closest frontier waypoint to robot.
-    vector<float> robot_pos = f_database->GetCalculatedWaypoint(*contour);
-    
-    goal_msg = f_database->PublishClosestFrontierAsNavGoal(robot_pos);
-    ROS_INFO("PUBLISHING WAYPOINT : [%f,%f,%f]", goal_msg.pose.position.x,goal_msg.pose.position.y,goal_msg.pose.position.z);
    
-    //Publishes nav goal marker.
-    marker = f_database->PublishNavGoal(goal_msg);
-    
-    ROS_INFO("LASER: [%f]", (*msg).header.stamp.toSec());
+    // Send shortest frontier point to move base client. Once client is done call back will end. 
+    SendGoaltoMoveBase();
 
+    ROS_INFO("LASER: [%f]", (*msg).header.stamp.toSec());
     }
 }
 
@@ -130,7 +194,7 @@ int main(int argc, char **argv){
     ros::Subscriber odom_sub = n.subscribe("/odom", 1, OdomCallback);
     ros::Subscriber laser_sub = n.subscribe("/scan_multi", 1, LaserCallback);
     ros::Subscriber map_sub = n.subscribe("/map", 1, OccupancyMapCallback);
-    ros::Publisher goal_pub = n.advertise<geometry_msgs::PoseStamped>("/move_base_simple/goal", 1);
+    //ros::Publisher goal_pub = n.advertise<geometry_msgs::PoseStamped>("/move_base_simple/goal", 1);
     ros::Publisher vis_pub = n.advertise<visualization_msgs::Marker>( "waypoint_marker", 0 );
     ros::Rate loop_rate(10);
     
@@ -138,7 +202,7 @@ int main(int argc, char **argv){
         
         ros::spinOnce();
         //Publish Calculated Goal Message to Rviz
-        goal_pub.publish(goal_msg);
+        //goal_pub.publish(goal_msg);
         vis_pub.publish( marker );
         loop_rate.sleep();
     }
@@ -146,3 +210,4 @@ int main(int argc, char **argv){
     return 0;
 
 }
+
