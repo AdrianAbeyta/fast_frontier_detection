@@ -10,7 +10,7 @@
 #include "nav_msgs/Odometry.h"
 #include "geometry_msgs/PoseStamped.h"
 #include "visualization_msgs/Marker.h"
-
+#include "move_base_msgs/MoveBaseAction.h"
 using nav_msgs::OccupancyGrid;
 
 
@@ -79,19 +79,21 @@ namespace FFD{
         bool WithinTolerance(geometry_msgs::Point32 point_a, geometry_msgs::Point32 point_b);
 
         // Frontier is a list of points, the robot goal is the average of the frontiers points. The closest average is the frontier average to go. 
-        void UpdateClosestFrontierAverage(Contour& c);
+        int UpdateClosestFrontierAverage(Contour& c);
 
         std::vector<float> GetCalculatedWaypoint(Contour c);
         geometry_msgs::PoseStamped PublishClosestFrontierAsNavGoal( std::vector<float> robot_pos );
-        visualization_msgs::Marker PublishNavGoal( geometry_msgs::PoseStamped goal_msg );
+        visualization_msgs::Marker PublishNavGoal( move_base_msgs::MoveBaseGoal goal_msg );
 
-        
+        float closest_frontier_distance_  = 100000.0;
+        std::vector<std::vector<float>> frontier_goals; 
+        std::vector<float> calculated_waypoint_;
 
       private:
         frontier_vector frontier_DB;
         frontier_vector new_frontiers;
-        std::vector<std::vector<float>> frontier_goals; 
-        std::vector<float> calculated_waypoint_;
+        
+       
     };
 
 }
