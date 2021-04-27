@@ -13,7 +13,7 @@
 #include <cmath>
 #include <cfloat>
 #include "visualization_msgs/Marker.h"
-#include <queue>
+#include "move_base_msgs/MoveBaseAction.h"
 
 using geometry::line2f;
 using std::cout;
@@ -320,6 +320,10 @@ void FrontierDB::MaintainFrontiers(Contour& c, const nav_msgs::OccupancyGrid& gr
         }//for x
     }//for y
     
+
+    // Merge New Frontiers with existing frontiers. 
+    MergeFrontiers();
+
     //Update frontier_goal_choices pts
     frontier_goals.clear();
     float sum_x = 0.0;
@@ -330,9 +334,8 @@ void FrontierDB::MaintainFrontiers(Contour& c, const nav_msgs::OccupancyGrid& gr
         
         for ( auto& point:frontier.msg.points)
         {  
-
-            sum_x += point.x;
-            sum_y += point.y;
+                sum_x += point.x;
+                sum_y += point.y;
         }
        
     
@@ -342,12 +345,55 @@ void FrontierDB::MaintainFrontiers(Contour& c, const nav_msgs::OccupancyGrid& gr
         vector<float> frontier_average_pt = {x_average,y_average};
         frontier_goals.push_back(frontier_average_pt);
         
-    
     }
     
-    
- ////////////////////////////////////////////////
+    // Clear the new frontiers db
+    ClearNewFrontier();
+       
+}
 
+bool FrontierDB::FrontierIsEmpty(frontier frontier)
+{   
+    //std::cout << " This is size:  "<< frontier.msg.points.size() << std::endl;
+    if ( frontier.msg.points.empty() )
+    {
+        //std::cout << "This is empty" << std::endl;
+        return true;
+    }
+
+return false;
+}
+
+void FrontierDB::ClearNewFrontier()
+{
+
+    for( unsigned int i=0; i< frontier_DB.frontiers.size(); i++)
+   {
+       if( frontier_DB.frontiers[i].msg.points.size() == 0 )
+       {
+           frontier_DB.frontiers.erase(frontier_DB.frontiers.begin() + i);
+       }
+   } 
+
+return;
+}
+
+bool FrontierDB::FrontierOverlaps(const frontier new_frontier,const frontier current_frontier)
+{
+    // Return true if frontier overlaps. 
+    for ( auto& point_new: new_frontier.msg.points)
+    {
+        for (auto& point_old: current_frontier.msg.points)
+        {
+            return WithinTolerance(point_new,point_old);
+        }  
+    }
+
+ return false;
+}
+
+void FrontierDB::MergeFrontiers()
+{
 //Storing new detected frontiers
 int ActiveArea[ 1000 ][ 1000 ];
 for (unsigned int i = 0; i < frontier_DB.frontiers.size(); ++i)
@@ -391,113 +437,8 @@ for( unsigned int i=0; i<new_frontiers.frontiers.size(); ++i)
         }
 
      } //for i
-
-
-for( unsigned int i=0; i< frontier_DB.frontiers.size(); i++)
-   {
-       if( frontier_DB.frontiers[i].msg.points.size() == 0 )
-       {
-           frontier_DB.frontiers.erase(frontier_DB.frontiers.begin() + i);
-       }
-   } 
-
-
-//////////////////////////////////////////////////
-    // Merge New Frontiers with existing frontiers. 
-    //MergeFrontiers();
-    
-    // Clear the new frontiers db
-    //ClearNewFrontier();
-       
 }
 
-
-
-bool FrontierDB::FrontierIsEmpty(frontier frontier)
-{   
-    //std::cout << " This is size:  "<< frontier.msg.points.size() << std::endl;
-    if ( frontier.msg.points.empty() )
-    {
-        //std::cout << "This is empty" << std::endl;
-        return true;
-    }
-
-return false;
-}
-
-void FrontierDB::ClearNewFrontier()
-{
-    // Clear new frontier vector 
-    for(auto& frontier : new_frontiers.frontiers )
-    {
-        frontier.msg.points.clear();
-    }
-
-    for( unsigned int i=0; i< frontier_DB.frontiers.size(); i++)
-   {
-       if( frontier_DB.frontiers[i].msg.points.size() == 0 )
-       {
-           frontier_DB.frontiers.erase(frontier_DB.frontiers.begin() + i);
-       }
-   }
-
-return;
-}
-
-bool FrontierDB::FrontierOverlaps(const frontier new_frontier,const frontier current_frontier)
-{
-    // Return true if frontier overlaps. 
-    for ( auto& point_new: new_frontier.msg.points)
-    {
-        for (auto& point_old: current_frontier.msg.points)
-        {
-            return WithinTolerance(point_new,point_old);
-        }  
-    }
-
- return false;
-}
-
-void FrontierDB::MergeFrontiers()
-{
-    if (new_frontiers.frontiers.size()> 0 ){
-    // Itterate through old and new frontiers
-    for(auto& frontier_new: new_frontiers.frontiers)
-    {
-        bool frontier_match_found = false;
-        
-        for(auto& frontier_old: frontier_DB.frontiers)
-        {
-            
-            
-            // If they overlap, merge the frontiers. 
-            if( FrontierOverlaps(frontier_new,frontier_old) )
-            {
-                for( auto& point_new: frontier_new.msg.points)
-                {
-                    for(auto& point_old: frontier_old.msg.points)
-                    {
-                        if( ! WithinTolerance( point_new, point_old ) )
-                        {
-                            frontier_old.msg.points.push_back(point_new);
-                            break;
-                        }
-                    }
-                }
-            
-            frontier_match_found = true;  
-            }      
-        }
-
-        // Add frontier to the frontiers database.  
-        if(frontier_match_found == false)
-        {
-            frontier_DB.frontiers.push_back(frontier_new);
-        }
-    }
-    }
-return;  
-}
 
 bool FrontierDB::WithinTolerance(geometry_msgs::Point32 point_a, geometry_msgs::Point32 point_b)
 {
@@ -519,40 +460,33 @@ bool FrontierDB::WithinTolerance(geometry_msgs::Point32 point_a, geometry_msgs::
  return false; 
 }
 
-void FrontierDB::UpdateClosestFrontierAverage( Contour& c )
+
+int FrontierDB::UpdateClosestFrontierAverage( Contour& c )
 {
 
-    std::vector<float> robot_pos = c.GetRobotPosition();
-    float goal_distance = 300000.0;
-    vector<float> goal;
+std::vector<float> robot_pos =  c.GetRobotPosition();
     
-
-    if (frontier_goals.size() > 0)
-    {
-        for ( auto& frontier_pt: frontier_goals )
-        {   
-            if ( !isinf(frontier_pt[0]) && !isinf(frontier_pt[1]) )
-            {
-
-                float distance_to_pt = sqrt(pow(frontier_pt[0]-robot_pos[0],2) + pow(frontier_pt[1]-robot_pos[1],2));
+    float distance_to_pt=0.0;
+    int frontier_i = 0;
+    for(int i = 0; i< frontier_goals.size(); i++ )
+    {   
+        if ( isfinite(frontier_goals[i][0]) && isfinite(frontier_goals[i][1]))
+        {
+            
+            float distance_to_pt = sqrt(pow(frontier_goals[i][0]-robot_pos[0],2) + pow(frontier_goals[i][1]-robot_pos[1],2));
                 
-                //Get shortest distance to point. 
-                if ( distance_to_pt < goal_distance ) 
-                {
-                    //Offset the frontier point so move_base will take as valid goal. 
-                    frontier_pt[0] = frontier_pt[0]+0.1;
-                    frontier_pt[1] = frontier_pt[1]+0.1;
-                    
-                    //set goal and update distance. 
-                    goal = frontier_pt;
-                    goal_distance = distance_to_pt;
-                }
+            //Get shortest distance to point. 
+            if ( distance_to_pt > 0.3 && distance_to_pt <=  closest_frontier_distance_ ) 
+            {
+                //set goal and update distance. 
+                frontier_i  = i;
+                closest_frontier_distance_  = distance_to_pt;
             }
         }
-            //Set private variable goal waypoint
-            calculated_waypoint_ = goal;   
-    }
-return;
+        ROS_INFO("Closest distance: %f", closest_frontier_distance_);
+        return frontier_i;    
+    } 
+
 }
 
 geometry_msgs::PoseStamped FrontierDB::PublishClosestFrontierAsNavGoal( vector<float> robot_pos )
@@ -574,22 +508,23 @@ geometry_msgs::PoseStamped FrontierDB::PublishClosestFrontierAsNavGoal( vector<f
     return goal_msg;  
 }
 
-visualization_msgs::Marker FrontierDB::PublishNavGoal( geometry_msgs::PoseStamped goal_msg )
+visualization_msgs::Marker FrontierDB::PublishNavGoal( move_base_msgs::MoveBaseGoal goal_msg )
 {
     visualization_msgs::Marker marker;
-    marker.header.frame_id = goal_msg.header.frame_id;
-    marker.header.stamp = goal_msg.header.stamp;
+
+    marker.header.frame_id = goal_msg.target_pose.header.frame_id;
+    marker.header.stamp = goal_msg.target_pose.header.stamp;
     marker.ns = "my_namespace";
     marker.id = 0;
     marker.type = visualization_msgs::Marker::SPHERE;
     marker.action = visualization_msgs::Marker::ADD;
-    marker.pose.position.x = goal_msg.pose.position.x;
-    marker.pose.position.y = goal_msg.pose.position.y;
-    marker.pose.position.z = goal_msg.pose.position.z;
-    marker.pose.orientation.x = goal_msg.pose.orientation.x;
-    marker.pose.orientation.y = goal_msg.pose.orientation.y;
-    marker.pose.orientation.z = goal_msg.pose.orientation.z;
-    marker.pose.orientation.w = goal_msg.pose.orientation.w;
+    marker.pose.position.x = goal_msg.target_pose.pose.position.x;
+    marker.pose.position.y = goal_msg.target_pose.pose.position.y;
+    marker.pose.position.z = goal_msg.target_pose.pose.position.z;
+    marker.pose.orientation.x = goal_msg.target_pose.pose.orientation.x;
+    marker.pose.orientation.y = goal_msg.target_pose.pose.orientation.y;
+    marker.pose.orientation.z = goal_msg.target_pose.pose.orientation.z;
+    marker.pose.orientation.w = goal_msg.target_pose.pose.orientation.w;
     marker.scale.x = 0.25;
     marker.scale.y = 0.25;
     marker.scale.z = 0.25;
@@ -613,3 +548,4 @@ std::vector<float> FrontierDB::GetCalculatedWaypoint(Contour c){
 } // End of FrontierDB Class 
 
     
+
