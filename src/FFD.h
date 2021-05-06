@@ -31,72 +31,108 @@
 //
 ///////////////////////////////////////////////////////////////////////////////
 
-#include <ros/ros.h> 
 #include <vector>
 #include <list>
-#include <sensor_msgs/PointCloud.h>
+#include "sensor_msgs/PointCloud.h"
 #include "eigen3/Eigen/Dense"
 #include "../shared/math/geometry.h"
 #include "../shared/math/line2d.h"
 #include "nav_msgs/OccupancyGrid.h"
-
-
 #include "sensor_msgs/LaserScan.h"
 #include "geometry_msgs/TransformStamped.h"
 #include "nav_msgs/Odometry.h"
 #include "geometry_msgs/PoseStamped.h"
+#include "visualization_msgs/Marker.h"
+#include "move_base_msgs/MoveBaseAction.h"
+using nav_msgs::OccupancyGrid;
 
-#include <pcl/point_types.h>
-#include <pcl/filters/passthrough.h>
-#include <pcl_conversions/pcl_conversions.h>
-#include <pcl/point_cloud.h>
-#include <pcl_ros/point_cloud.h>
-#include <tf2_ros/buffer.h>
 
+#ifndef CONTOURS_H
+#define CONTOURS_H
 
 namespace ros {
   class NodeHandle;
 }
 
-namespace NegativeObstacle{
+namespace FFD{
 
-    class FilterPCL{
-     
-      public:
-      
-      // Filter Raw Camera Points 
-      pcl::PointCloud<pcl::PointXYZ>::Ptr Filter_Camera_Points( pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr camera_cloud_filtered );
-      
-      // Convert From sensor_msgs::PointCloud2::ConstPtr to a pcl::PointCloud<pcl::pointxyz>::Ptr
-      pcl::PointCloud<pcl::PointXYZ>::Ptr PointCloud2_To_PCL( const sensor_msgs::PointCloud2ConstPtr& cloud);
-      
-      // Extracts pointcloud points that are below the floor plane. (CAMERA)
-      pcl::PointCloud<pcl::PointXYZ>::Ptr NegativeLimitFilter( const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered );
-      
-      // Extracts pointcloud points that are on the floor plane. (CAMERA)
-      pcl::PointCloud<pcl::PointXYZ>::Ptr FloorProjection( const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered );
-      
-      // Extracts pointcloud points from robots height to floor. (LIDAR)
-      pcl::PointCloud<pcl::PointXYZ>::Ptr PointsToFloor( const pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered );
-      
+    // Describes a frontier
+    struct frontier {
+        sensor_msgs::PointCloud msg;
+    };
+    // Holds a vector of frontiers for processing
+    struct frontier_vector{
+        std::vector<frontier> frontiers;
     };
 
-    class FarthestPoint{
+
+    class Contour {
+      public:
+        //Default Constructor
+        Contour( ros::NodeHandle* n );
+        //Generate a list of contour points (set resolution of line) from laser scan points
+        void GenerateContour( const sensor_msgs::PointCloud& laser_coordinates );
+        //Generate a vector of points sampled from line and appends to contour
+        void SampleLine( const geometry::line2f line );
+        //Return active area from current contour
+        void UpdateActiveArea( const nav_msgs::Odometry& msg , const sensor_msgs::PointCloud& laser_coordinates,  geometry_msgs::TransformStamped robot_transform );
+        //Returns contour data
+        sensor_msgs::PointCloud GetContour();
+        //Returns bounds for active area
+        std::vector<float> GetActiveArea();
+        //Returns robot position
+        std::vector<float> GetRobotPosition();
       
+      private:
+        // Robot position
+        std::vector<float> robot_pos_;
+        sensor_msgs::PointCloud contour_; //Only one contour in the entire program
+        const float resolution_; //m : line sampling
+        std::vector<float> active_area_; // order of values is (xmin, xmax, ymin, ymax)
+    };
+
+    class FrontierDB {
       public:
         
-        // Takes the furthest points in the pointcloud and converts to laserscan msg.
-        sensor_msgs::LaserScan FurthestPointExtraction(sensor_msgs::PointCloud2 lidar_cloud);
+        // Default contructor
+        FrontierDB( ros::NodeHandle* n );
+
+        // Appends new frontiers from contour
+        void ExtractNewFrontier( Contour& c, const nav_msgs::OccupancyGrid& g );
+        bool IsCellFrontier( const nav_msgs::OccupancyGrid& g, const int x_cell, const int y_cell );
+        bool InGrid(const nav_msgs::OccupancyGrid& g, const int x_cell, const int y_cell  ) const;
         
-        // Projetcs the pointcloud points into the virtual floor plane and converts to a laserscan msg. 
-        sensor_msgs::LaserScan VirtualFloorProjection(sensor_msgs::PointCloud2 lidar_cloud);
+        // Performs maintenance step
+        void MaintainFrontiers( Contour& c , const nav_msgs::OccupancyGrid& graph);
         
-        // Converts all points in the pointcloud to laserscan msg.
-        sensor_msgs::LaserScan PointToLaser(const sensor_msgs::PointCloud2ConstPtr& cloud_filtered );
+        // Clears the new frontiers db. 
+        void ClearNewFrontier();
+        bool FrontierIsEmpty(frontier frontier);
         
-        // Combines the laserscan msgs into a single msg. 
-        sensor_msgs::LaserScan CombineLaserScans(sensor_msgs::LaserScan  array_a, sensor_msgs::LaserScan  array_b , sensor_msgs::LaserScan  array_c);
-  
+        // Combines the new and past frontier points within the active area. 
+        void MergeFrontiers();
+        
+        // Frontier is a list of points, the robot goal is the average of the frontiers points. The closest average is the frontier average to go. 
+        int UpdateClosestFrontierAverage(Contour& c);
+
+        // Vizualize waypoint.
+        visualization_msgs::Marker PublishNavGoal( move_base_msgs::MoveBaseGoal goal_msg );
+
+        // Inialized value for determining closest frontier waypoint from froniters list. 
+        float closest_frontier_distance_ = 100000.0;
+        
+        // Current frontier points 
+        std::vector<std::vector<float>> frontier_goals; 
+        
+        private:
+        
+        //Current list of frontiers.
+        frontier_vector frontier_DB;
+        
+        //Current list of newly detected frontiers. 
+        frontier_vector new_frontiers;
+        
     };
 
 }
+#endif
