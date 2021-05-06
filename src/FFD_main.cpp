@@ -31,219 +31,123 @@
 //
 ///////////////////////////////////////////////////////////////////////////////
 
-
-
-#include "ros/ros.h"
-#include "std_msgs/String.h"
-#include "geometry_msgs/PoseStamped.h"
-#include "geometry_msgs/TransformStamped.h"
-#include "sensor_msgs/LaserScan.h"
-#include "visualization_msgs/Marker.h"
-#include "nav_msgs/OccupancyGrid.h"
-#include "nav_msgs/Odometry.h"
-#include <tf2_ros/transform_listener.h>
-#include <tf/transform_listener.h>
-#include <sstream>
-
+#include "negative_obstacle_detection.h"
+#include <ros/ros.h> 
+#include <sensor_msgs/LaserScan.h>
 #include <sensor_msgs/PointCloud.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/point_cloud_conversion.h>
-#include <pcl/pcl_base.h>
+
+#include <message_filters/subscriber.h>
+#include <message_filters/time_synchronizer.h>
+#include <message_filters/sync_policies/approximate_time.h>
+
+#include <pcl/point_types.h>
+#include <pcl/filters/passthrough.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
 #include <pcl_ros/point_cloud.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/PCLPointCloud2.h>
+#include <pcl_ros/transforms.h>
 
-#include "move_base_msgs/MoveBaseAction.h"
-#include "actionlib/client/simple_action_client.h"
-#include <cstdlib> 
-#include <ctime> 
-#include "FFD.h"
+using NegativeObstacle::FilterPCL;
+FilterPCL* point_cloud_;
 
-#include "../laser_geometry-kinetic-devel/include/laser_geometry/laser_geometry.h"
+using NegativeObstacle::FarthestPoint;
+FarthestPoint* furthest_point_;
 
-using std::vector;
-using Eigen::Vector2f;
-using FFD::Contour;
-using FFD::FrontierDB;
-using sensor_msgs::convertPointCloud2ToPointCloud;
-using sensor_msgs::convertPointCloudToPointCloud2;
+// Final Laserscans 
+sensor_msgs::LaserScan  A_;
+sensor_msgs::LaserScan  B_;
+sensor_msgs::LaserScan  C_;
+sensor_msgs::LaserScan  D_;
 
+// Pointcloud manipulation 
+pcl::PointCloud<pcl::PointXYZ>::Ptr negative_cloud_filter ( new pcl::PointCloud<pcl::PointXYZ> );
+pcl::PointCloud<pcl::PointXYZ>::Ptr floor_cloud_filter ( new pcl::PointCloud<pcl::PointXYZ> );
+pcl::PointCloud<pcl::PointXYZ>::Ptr Points_To_Floor_filter ( new pcl::PointCloud<pcl::PointXYZ> );
 
-laser_geometry::LaserProjection projector_;
-sensor_msgs::PointCloud laser_in_map;
-sensor_msgs::PointCloud2 laser_in_map_pc2;
-geometry_msgs::TransformStamped robot_transform;
+// Pointcloud type conversions 
+pcl::PointCloud<pcl::PointXYZ>::Ptr pointcloud2_to_pcl (new pcl::PointCloud<pcl::PointXYZ>);
+pcl::PointCloud<pcl::PointXYZ>::Ptr camera_cloud_filtered (new pcl::PointCloud<pcl::PointXYZ>);
+//pcl::PointCloud<pcl::PointXYZ>::Ptr lidar_cloud_filtered (new pcl::PointCloud<pcl::PointXYZ>);
 
-Contour* contour;
-FrontierDB* f_database;
-nav_msgs::Odometry odom_msg;
-nav_msgs::OccupancyGrid global_map;
-geometry_msgs::PoseStamped goal_msg;
-visualization_msgs::Marker marker;
-tf2_ros::TransformListener* listener; // Odom listener
-tf::TransformListener* listener2; // Laser listener
-tf2_ros::Buffer* tfBuffer_;
-int frontier_i;
-typedef actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction> MoveBaseClient;
-bool initial_map_FLAG = false; 
-
-void OdomCallback(const nav_msgs::Odometry::ConstPtr& msg){
-
-    try{
-        odom_msg = *msg;
-        ROS_INFO("ODOM: [%f]", (*msg).header.stamp.toSec());
-    }
-    catch(ros::Exception &e ){
-        ROS_ERROR("Error occured: %s ", e.what());
-    }
-
-}
-
-void SendGoaltoMoveBase(int frontier_i ){
-
-//////         Handle Movebase Action       //////
-
-    //End exploration if there are no more frontiers. 
-    if(f_database->frontier_goals.size() == 0)
-			return;
+void pointcloudCallback(const sensor_msgs::PointCloud2ConstPtr& camera_cloud, const sensor_msgs::PointCloud2ConstPtr& lidar_cloud){
     
-    // Fill out move base msg publisher.
-    move_base_msgs::MoveBaseGoal goal_pub;
-	goal_pub.target_pose.header.frame_id = "map";
-	goal_pub.target_pose.header.stamp = ros::Time::now();
-	
-     // If timeout or no action pick random frontier goal. 
-    bool at_target = false;
-	int attempts = 0;	
-    while(!at_target && attempts < 2) 
-    {
-		if(attempts >= 0)
-        {
-			frontier_i = (rand() % f_database->frontier_goals.size());
-			at_target = false;
-		}
-			attempts++;
-    }
+    //////////// NEGATIVE OBSTACLE DETECTION ////////////
 
-    goal_pub.target_pose.pose.position.x = f_database->frontier_goals[frontier_i][0] - 0.1;
-    goal_pub.target_pose.pose.position.y = f_database->frontier_goals[frontier_i][1];
-	geometry_msgs::Quaternion odom_quat = tf::createQuaternionMsgFromYaw(0);
-    goal_pub.target_pose.pose.orientation = odom_quat;
-    ROS_INFO("Navigating to: x: %f y: %f", goal_pub.target_pose.pose.position.x, goal_pub.target_pose.pose.position.y);
+    // Convert camera sensor_msg to pcl
+    pointcloud2_to_pcl = point_cloud_->PointCloud2_To_PCL(camera_cloud);
+    // Filter the raw camrea points 
+    camera_cloud_filtered = point_cloud_->Filter_Camera_Points(pointcloud2_to_pcl,camera_cloud_filtered);
     
-    // Initaiate move base client
-    MoveBaseClient ac("move_base", true);
+    // Filter the camrea points for desired useage (Furthest Point or Virtual Floor)
+    //floor_cloud_filter = point_cloud_->FloorProjection( camera_cloud_filtered, floor_cloud_filter );
+    negative_cloud_filter = point_cloud_->NegativeLimitFilter( camera_cloud_filtered , negative_cloud_filter );
     
-    //If move base server not up wait untill it is. 
-    while(!ac.waitForServer(ros::Duration(15.0)))
-    {
-				ROS_INFO("Is the move_base action server up? ");
-	}
-    
-    //Publishes nav goal marker.
-    ac.sendGoal(goal_pub);
-    marker = f_database->PublishNavGoal(goal_pub);
-	
-    //Time to wait for robot to travel to goal before setting new path. 
-    ac.waitForResult(ros::Duration(10.0));
-    
-    //If the robot reaches given goal, rotate in circle and publush new goal. 
-    if(ac.getState() == actionlib::SimpleClientGoalState::SUCCEEDED) 
-    {
-		at_target = true;
-		ROS_INFO("The base moved to %f,%f", goal_pub.target_pose.pose.position.x, goal_pub.target_pose.pose.position.y);
-		geometry_msgs::Quaternion odom_quat = tf::createQuaternionMsgFromYaw(3.14);
-		goal_pub.target_pose.pose.orientation = odom_quat;
-		marker = f_database->PublishNavGoal(goal_pub);
-        ac.sendGoal(goal_pub);
-		ac.waitForResult();
-	}
+    //Convert camera points back to sensor msgs pointcloud 2 msg;
+    sensor_msgs::PointCloud2  final_camera_points;
+    pcl::toROSMsg( *negative_cloud_filter, final_camera_points);
 
-}
 
-void LaserCallback(const sensor_msgs::LaserScan::ConstPtr& msg){
+    // Get resulting laserscan msg for each method 
+    //A_ = furthest_point_->FurthestPointExtraction( floor_cloud_filter );
+    B_ = furthest_point_->VirtualFloorProjection( final_camera_points  );
     
-    if(initial_map_FLAG == true)
-    {
-    
-        // Transform laserscan to pointcloud. 
-        ros::Time t = ros::Time(0); 
-        listener2->waitForTransform("/scan", "/map", t, ros::Duration(3));
-        projector_.transformLaserScanToPointCloud("map",*msg,laser_in_map,*listener2);
-        
-        // Get transform of robot pose to map frame. 
-        robot_transform = tfBuffer_->lookupTransform("base_link","map",ros::Time::now(),ros::Duration(3));
-        
-         //////         FFD         //////
-    
-        // Generate a list of contour points (set resolution of line) from laser scan points
-        contour->GenerateContour( laser_in_map );
-    
-        // Return active area as ------- from current contour
-        contour->UpdateActiveArea( odom_msg, laser_in_map, robot_transform );
-    
-        // Appends new frontiers from contour
-        f_database->ExtractNewFrontier(*contour, global_map);
-        
-        f_database->MaintainFrontiers(*contour, global_map); 
+    //////////// OBSTACLE DETECTION ////////////
 
-        // Frontier is a list of points, returns the index of the frontier with shortest distace with respect to the robot position. 
-        frontier_i = f_database->UpdateClosestFrontierAverage(*contour);
-        SendGoaltoMoveBase(frontier_i);
-
-    ROS_INFO("LASER: [%f]", (*msg).header.stamp.toSec());
+    /////Points_To_Floor_filter = point_cloud_->PointsToFloor(lidar_cloud, Points_To_Floor_filter ); // TODO: SET UP A WAY TO FILTER DOWN POINTCLOUDS
     
-    }
-}
-
-void OccupancyMapCallback(const nav_msgs::OccupancyGrid::ConstPtr& msg){
-
-    if (initial_map_FLAG == false)
-    {
-        initial_map_FLAG = true;
-    }
+    // Get resdulting laserscan from filtered point clouds. 
+    C_ = furthest_point_->PointToLaser(lidar_cloud);
     
-    try{
-        
-        global_map = *msg;
-        ROS_INFO("Occupancy: [%f]", (*msg).header.stamp.toSec());
-    }
-    
-    catch(ros::Exception &e ){
-        ROS_ERROR("Error occured: %s ", e.what());
-    }
+
+    // Combine the respective methods Laserscan into a single scan. 
+    D_ = furthest_point_->CombineLaserScans( B_ , C_ , D_);
     
 }
 
-int main(int argc, char **argv){
+int main(int argc, char** argv) {
+    
+    ros::init(argc, argv, "object_detection_node");
+    
+    ros::NodeHandle nh;
 
-    ros::init(argc, argv, "FFD");
-    ros::NodeHandle n;
-    contour = new Contour(&n);
-    f_database = new FrontierDB(&n);
+    message_filters::Subscriber<sensor_msgs::PointCloud2> camera_cloud_sub(nh,"/camera/depth/color/points", 1);
+    message_filters::Subscriber<sensor_msgs::PointCloud2> lidar_cloud_sub(nh,"/velodyne_points", 1);
+   
+    typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::PointCloud2,sensor_msgs::PointCloud2> MySyncPolicy;
+    typedef message_filters::Synchronizer<MySyncPolicy> Sync;
     
-    tfBuffer_ = new tf2_ros::Buffer; 
-    listener = new tf2_ros::TransformListener(*tfBuffer_);
-    listener2 = new tf::TransformListener();
+    boost::shared_ptr<Sync> S;
+    S.reset(new Sync( MySyncPolicy(5), camera_cloud_sub, lidar_cloud_sub));
+    S->registerCallback( boost::bind(&pointcloudCallback, _1, _2) );
+
+    //ros::Publisher camera_laser_pub = nh.advertise<sensor_msgs::LaserScan>("/camera_scan", 1);
+    //ros::Publisher camera_filter_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZ>>("/camera_points_filter", 1000);
+    
+    ros::Publisher velodyne_laser_pub = nh.advertise<sensor_msgs::LaserScan>("/scan_multi", 1);
+    //ros::Publisher velodyne_filter_pub = nh.advertise<pcl::PointCloud<pcl::PointXYZ>>("/velodyne_points_filter", 1000);
+
+    ros::Rate loop_rate(10); //10 Hz
     
 
-    ros::Subscriber odom_sub = n.subscribe("/odom", 1, OdomCallback);
-    ros::Subscriber laser_sub = n.subscribe("/scan", 1, LaserCallback);
-    ros::Subscriber map_sub = n.subscribe("/map", 1, OccupancyMapCallback);
-    //ros::Publisher goal_pub = n.advertise<geometry_msgs::PoseStamped>("/move_base_simple/goal", 1);
-    ros::Publisher vis_pub = n.advertise<visualization_msgs::Marker>( "waypoint_marker", 0 );
-    ros::Rate loop_rate(10);
-    
-    while (ros::ok()){
+    int count = 0;
+    while (ros::ok())
+    {   
+        // Vizualize filtered pointcloud points 
+        //velodyne_filter_pub.publish(*Points_To_Floor_filter);
+        //camera_filter_pub.publish(*negative_cloud_filter);
         
+        // Pub combined laserscan
+        velodyne_laser_pub.publish(D_);
+
         ros::spinOnce();
-        //Publish Calculated Goal Message to Rviz
-        //goal_pub.publish(goal_msg);
-        vis_pub.publish( marker );
         loop_rate.sleep();
+        ++count;
     }
-    delete contour;
-    return 0;
 
+    return 0;
 }
