@@ -31,6 +31,7 @@
 //
 ///////////////////////////////////////////////////////////////////////////////
 
+#include "fast_frontier_detection/ffd.h"
 #include "ros/ros.h"
 #include "std_msgs/String.h"
 #include "geometry_msgs/PoseStamped.h"
@@ -56,9 +57,9 @@
 #include "actionlib/client/simple_action_client.h"
 #include <cstdlib> 
 #include <ctime> 
-#include "FFD.h"
 
-#include "../laser_geometry-kinetic-devel/include/laser_geometry/laser_geometry.h"
+
+#include "laser_geometry/laser_geometry.h"
 
 using std::vector;
 using Eigen::Vector2f;
@@ -167,11 +168,16 @@ void LaserCallback(const sensor_msgs::LaserScan::ConstPtr& msg){
     
         // Transform laserscan to pointcloud. 
         ros::Time t = ros::Time(0); 
-        listener2->waitForTransform("/scan_multi", "/map", t, ros::Duration(3));
-        projector_.transformLaserScanToPointCloud("map",*msg,laser_in_map,*listener2);
         
+        try {
+        listener2->waitForTransform("/scan_multi", "/map", t, ros::Duration(1.0));
+        projector_.transformLaserScanToPointCloud("map",*msg,laser_in_map,*listener2);
+        } catch (tf2::ExtrapolationException &e){
+          ROS_ERROR_STREAM("ExtrapolationException: " << e.what());
+          return;
+        }
         // Get transform of robot pose to map frame. 
-        robot_transform = tfBuffer_->lookupTransform("base_link","map",ros::Time::now(),ros::Duration(3));
+        robot_transform = tfBuffer_->lookupTransform("base_link","map",t,ros::Duration(3.0));
         
          //////         FFD         //////
     
@@ -189,7 +195,7 @@ void LaserCallback(const sensor_msgs::LaserScan::ConstPtr& msg){
         // Frontier is a list of points, returns the index of the frontier with shortest distace with respect to the robot position. 
         frontier_i = f_database->UpdateClosestFrontierAverage(*contour);
         SendGoaltoMoveBase(frontier_i);
-
+        
         ROS_INFO("LASER: [%f]", (*msg).header.stamp.toSec());
     
     }
