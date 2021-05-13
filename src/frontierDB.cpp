@@ -176,7 +176,7 @@ bool FrontierDB::InGrid( const nav_msgs::OccupancyGrid& g ,const int col, const 
 void FrontierDB::MaintainFrontiers( const Contour& c, const nav_msgs::OccupancyGrid& graph)
 {
     //Get active area
-    std::vector<float> active_area = c.GetActiveArea(); //Xmin,Xmax,Ymin,Ymax // TODO: make a custom struct that contains these values. 
+    std::vector<float> active_area = c.GetActiveArea(); //Xmin,Xmax,Ymin,Ymax // 
 
     // Remove frontierDB points in the active area
     
@@ -252,7 +252,6 @@ void FrontierDB::MaintainFrontiers( const Contour& c, const nav_msgs::OccupancyG
         }   
     }
 
-    cout<< new_frontiers_.frontiers.size() << endl;
     // Merge New Frontiers with existing frontiers. 
     MergeFrontiers();
  
@@ -314,7 +313,7 @@ void FrontierDB::MergeFrontiers()
                    frontier_DB_.frontiers[exists].msg.points.push_back(f.msg.points[merged]); 
                }
  
-               new_frontiers_.frontiers[i].msg.points.clear(); // TODO
+               new_frontiers_.frontiers[i].msg.points.clear(); 
       
                overlap = 1;
                break;
