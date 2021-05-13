@@ -29,13 +29,12 @@ rosrun gmapping slam_gmapping scan:=scan_multi
 roslaunch magni_nav move_base.launch
 ```
 
-- Note: Instructions to preform after the FFD demo has started
-- In the bottom left courner of RVIZ click add -> By topic ->  and add both /contor pointcloud and /latest_frontiers pointcloud inorder to see the visualized contor and frontiers. 
-- In the dispays window unsubscribe (uncheck) all boxes except for Grid,RobotModel,Navigation,and Static Map. (For better visualization of the contors and frontiers increase the size of the pointclouds in their respective display topic.) 
- 
 ### Start the FFD demo:
 Once the demo has started the robot will begin to map and explore the enviornment. The demonstration will complete once the robot has finished constucting a map of the enviornment. 
 
 ```
 rosrun fast_frontier_detection fast_frontier_detection_node 
 ```
+- Note: Instructions to preform after the FFD demo has started
+- In the bottom left courner of RVIZ click add -> By topic ->  and add both /contor pointcloud and /latest_frontiers pointcloud inorder to see the visualized contor and frontiers. 
+- In the dispays window unsubscribe (uncheck) all boxes except for Grid,RobotModel,Navigation,and Static Map. (For better visualization of the contors and frontiers increase the size of the pointclouds in their respective display topic.) 
