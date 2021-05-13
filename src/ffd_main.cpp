@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////
-//      Title     : FFD_main.cpp
+//      Title     : ffd_main.cpp
 //      Project   : fast_frontier_detection
 //      Created   : 01/15/21
 //      Author    : Adrian Abeyta
