@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////
 //      Title     : FFD.h
-//      Project   : fast_frontier_detection
+//      Project   : frontierDB.h
 //      Created   : 01/15/21
 //      Author    : Adrian Abeyta
 //      Platforms : Ubuntu 64-bit
