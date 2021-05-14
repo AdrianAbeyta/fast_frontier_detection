@@ -41,8 +41,10 @@ rosrun fast_frontier_detection fast_frontier_detection_node
 
 ### FFD Node
 1. Subscribed Topics:
-- camera_cloud (sensor_msgs::PointCloud2) : 3D pointcloud from a depth camera sensor. 
-- lidar_cloud (sensor_msgs::PointCloud2) : 3D pointcloud from LIDAR sensor.  
+- odom (nav_msgs::Odometry): Odometry information from the robot. 
+- scan (sensor_msgs::LaserScan): Laserscan message from LIDAR sensor. 
+- map (nav_msgs::OccupancyGrid): Occupancy grid map. 
 
 2. Published Topics:
-- laser (sensor_msgs::LaserScan) : Final laser scan message. 
+- goal (move_base_msgs::MoveBaseGoal): Issued frontier waypoint.
+- goal_viz (visualization_msgs::Marker): Visualized waypoint in RVIZ.
