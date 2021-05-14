@@ -38,3 +38,11 @@ rosrun fast_frontier_detection fast_frontier_detection_node
 - Note: Instructions to preform after the FFD demo has started
 - In the bottom left courner of RVIZ click add -> By topic ->  and add both /contor pointcloud and /latest_frontiers pointcloud inorder to see the visualized contor and frontiers. 
 - In the dispays window unsubscribe (uncheck) all boxes except for Grid,RobotModel,Navigation,and Static Map. (For better visualization of the contors and frontiers increase the size of the pointclouds in their respective display topic.) 
+
+### FFD Node
+1. Subscribed Topics:
+- camera_cloud (sensor_msgs::PointCloud2) : 3D pointcloud from a depth camera sensor. 
+- lidar_cloud (sensor_msgs::PointCloud2) : 3D pointcloud from LIDAR sensor.  
+
+2. Published Topics:
+- laser (sensor_msgs::LaserScan) : Final laser scan message. 
